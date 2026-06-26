@@ -10,9 +10,9 @@ def format_report(report: dict) -> dict:
         "status": report.get("status"),
         "review": {
             "code_analysis": report.get("summary", {}).get("code_analysis", ""),
-            "security_findings": "Coming in Phase 2",
-            "style_issues": "Coming in Phase 2",
-            "impact_analysis": "Coming in Phase 3",
-            "voice_summary": "Coming in Phase 4"
+            "security_findings": "...",
+            "style_issues": "...",
+            "impact_analysis": "...",
+            "voice_summary": "..."
         }
     }

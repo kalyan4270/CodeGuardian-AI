@@ -44,10 +44,10 @@ def code_analysis_agent(state: ReviewState) -> ReviewState:
     """
 
     response = client.chat.completions.create(
-        model="llama3-70b-8192",  # best free model on Groq
+        model="llama-3.3-70b-versatile",  # best model on Groq
         # alternatives if you hit rate limits:
-        # model="llama3-8b-8192"      # faster, lighter
-        # model="mixtral-8x7b-32768"  # good for code
+        # model="llama-3.1-8b-instant"      # faster, lighter
+        # model="mixtral-8x7b-32768"        # good for code
         messages=[{"role": "user", "content": prompt}],
         max_tokens=1024,
         temperature=0.3
