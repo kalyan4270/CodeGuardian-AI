@@ -3,7 +3,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-
+from graph.neo4j_client import neo4j_client
 from models.schemas import PRRequest, ReviewResponse
 from services.github_service import fetch_pr_data
 from agents.orchestrator import review_graph
@@ -16,6 +16,14 @@ app = FastAPI(
     description="Multi-Agent Intelligent Code Review Platform",
     version="0.1.0 — Phase 1"
 )
+
+@app.on_event("startup")
+async def startup():
+    try:
+        msg = neo4j_client.verify_connection()
+        print(f"{msg}")
+    except Exception as e:
+        print(f"Neo4j connection failed: {e}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,9 +61,10 @@ async def review_pr(request: PRRequest):
             "repo_name":         pr_data["repo_name"],
             "pr_number":         pr_data["pr_number"],
             "code_analysis":     "",
-            "security_findings": "",   # NEW
-            "style_issues":      "",   # NEW
-            "impact_analysis":   "",   # NEW
+            "security_findings": "",
+            "style_issues":      "",
+            "impact_analysis":   "",
+            "graph_metadata":    {},    # NEW
             "final_report":      {}
         }
 
