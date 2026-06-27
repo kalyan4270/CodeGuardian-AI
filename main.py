@@ -47,13 +47,16 @@ async def review_pr(request: PRRequest):
 
         # Step 2: Build initial state for LangGraph
         initial_state = {
-            "pr_diff": pr_data["pr_diff"],
-            "pr_description": pr_data["pr_description"],
-            "pr_title": pr_data["pr_title"],
-            "repo_name": pr_data["repo_name"],
-            "pr_number": pr_data["pr_number"],
-            "code_analysis": "",
-            "final_report": {}
+            "pr_diff":           pr_data["pr_diff"],
+            "pr_description":    pr_data["pr_description"],
+            "pr_title":          pr_data["pr_title"],
+            "repo_name":         pr_data["repo_name"],
+            "pr_number":         pr_data["pr_number"],
+            "code_analysis":     "",
+            "security_findings": "",   # NEW
+            "style_issues":      "",   # NEW
+            "impact_analysis":   "",   # NEW
+            "final_report":      {}
         }
 
         # Step 3: Run through LangGraph agent pipeline
