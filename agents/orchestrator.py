@@ -1,114 +1,104 @@
-import os
-from typing import TypedDict, Optional
-from langgraph.graph import StateGraph, END
-from groq import Groq
-from dotenv import load_dotenv
-from concurrent.futures import ThreadPoolExecutor
+from __future__ import annotations
 
-load_dotenv()
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
 
+from langgraph.graph import END, StateGraph
+
+from agents.code_agent import code_analysis_agent
+from agents.impact_agent import impact_agent
 from agents.security_agent import security_agent
 from agents.style_agent import style_agent
-from agents.impact_agent import impact_agent
+from core.llm import complete
+from core.logging import get_logger
+from models.state import ReviewState
 
-# ---- Updated State ----
-class ReviewState(TypedDict):
-    pr_diff:           str
-    pr_description:    str
-    pr_title:          str
-    repo_name:         str
-    pr_number:         int
-    code_analysis:     str
-    security_findings: str
-    style_issues:      str
-    impact_analysis:   str
-    graph_metadata:    dict
-    final_report:      dict
+logger = get_logger(__name__)
 
-# ---- Code Analysis Agent ----
-def code_analysis_agent(state: ReviewState) -> ReviewState:
-    prompt = f"""
-    You are an expert code reviewer. Analyse the following pull request.
+_AGENT_RUNNERS = (
+    code_analysis_agent,
+    security_agent,
+    style_agent,
+    impact_agent,
+)
 
-    PR Title: {state['pr_title']}
-    PR Description: {state['pr_description']}
+_AGENT_OUTPUT_KEYS: dict[str, str | tuple[str, ...]] = {
+    "code_analysis_agent": "code_analysis",
+    "security_agent":      "security_findings",
+    "style_agent":         "style_issues",
+    "impact_agent":        ("impact_analysis", "graph_metadata"),
+}
 
-    Code Changes (diff):
-    {state['pr_diff']}
 
-    Provide a structured review covering:
-    1. Potential bugs or logic errors
-    2. Code quality issues
-    3. Performance concerns
-    4. Positive aspects of the change
-
-    Be specific and actionable.
+def _merge_agent_results(
+    base: ReviewState,
+    results: list[ReviewState],
+    completed_agents: list[str],
+) -> ReviewState:
     """
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",  # best model on Groq
-        # alternatives if you hit rate limits:
-        # model="llama-3.1-8b-instant"      # faster, lighter
-        # model="mixtral-8x7b-32768"        # good for code
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=1024,
-        temperature=0.3
-    )
-    state["code_analysis"] = response.choices[0].message.content
-    return state
+    Merge only the specific keys each agent owns.
+    Prevents agents overwriting each other with empty strings.
+    """
+    merged = dict(base)
 
-# ---- Parallel Runner (all 4 agents) ----
+    for agent_name, result in zip(completed_agents, results):
+        keys = _AGENT_OUTPUT_KEYS.get(agent_name, [])
+        if isinstance(keys, str):
+            keys = (keys,)
+        for key in keys:
+            value = result.get(key)
+            if value:
+                merged[key] = value
+
+    return merged  # type: ignore[return-value]
+
+
 def parallel_agents(state: ReviewState) -> ReviewState:
-    """
-    Runs all 4 agents simultaneously.
-    Impact agent runs alongside others — Neo4j
-    queries are fast enough for parallel execution.
-    """
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        code_future     = executor.submit(code_analysis_agent, state.copy())
-        security_future = executor.submit(security_agent, state.copy())
-        style_future    = executor.submit(style_agent, state.copy())
-        impact_future   = executor.submit(impact_agent, state.copy())
+    """Run all review agents concurrently and merge their outputs."""
+    with ThreadPoolExecutor(max_workers=len(_AGENT_RUNNERS)) as executor:
+        futures = {}
+        for i, runner in enumerate(_AGENT_RUNNERS):
+            if i > 0:
+                time.sleep(0.5)
+            future = executor.submit(runner, dict(state))
+            futures[future] = runner.__name__
 
-        code_result     = code_future.result()
-        security_result = security_future.result()
-        style_result    = style_future.result()
-        impact_result   = impact_future.result()
+        results = []
+        completed_agents = []
 
-    # Merge all results
-    state["code_analysis"]     = code_result["code_analysis"]
-    state["security_findings"] = security_result["security_findings"]
-    state["style_issues"]      = style_result["style_issues"]
-    state["impact_analysis"]   = impact_result["impact_analysis"]
-    state["graph_metadata"]    = impact_result.get("graph_metadata", {})
+        for future in as_completed(futures):
+            agent_name = futures[future]
+            try:
+                result = future.result()
+                logger.info("✅ %s completed", agent_name)
+                results.append(result)
+                completed_agents.append(agent_name)
+            except Exception as exc:
+                logger.error("❌ %s failed: %s", agent_name, exc)
 
-    return state
+    return _merge_agent_results(state, results, completed_agents)
 
-# ---- Report Generator ----
+
 def report_generator_agent(state: ReviewState) -> ReviewState:
     summary_prompt = f"""
-    Based on the following code review findings, write a 2-3 sentence
-    executive summary of this pull request review:
+Based on the following code review findings, write a 2-3 sentence
+executive summary of this pull request review:
 
-    Code Analysis: {state['code_analysis'][:400]}
-    Security: {state['security_findings'][:300]}
-    Style: {state['style_issues'][:300]}
-    Impact: {state['impact_analysis'][:300]}
+Code Analysis: {state['code_analysis'][:400]}
+Security: {state['security_findings'][:300]}
+Style: {state['style_issues'][:300]}
+Impact: {state['impact_analysis'][:300]}
 
-    Mention the most critical issues and overall risk level.
-    """
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": summary_prompt}],
-        max_tokens=256,
-        temperature=0.3
-    )
-
+Mention the most critical issues and overall risk level.
+"""
     state["final_report"] = {
         "pr_number":         state["pr_number"],
         "repo":              state["repo_name"],
         "pr_title":          state["pr_title"],
-        "executive_summary": response.choices[0].message.content,
+        "executive_summary": complete(
+            summary_prompt, max_tokens=256, temperature=0.3
+        ),
         "summary": {
             "code_analysis":     state["code_analysis"],
             "security_findings": state["security_findings"],
@@ -118,18 +108,19 @@ def report_generator_agent(state: ReviewState) -> ReviewState:
         "graph_metadata": state.get("graph_metadata", {}),
         "status":         "completed",
         "agents_run":     ["code_analysis", "security", "style", "impact"],
-        "phase":          3
+        "phase":          4,
     }
     return state
 
-# ---- Build Graph ----
-def build_review_graph():
+
+def build_review_graph() -> Any:
     workflow = StateGraph(ReviewState)
-    workflow.add_node("parallel_agents", parallel_agents)
-    workflow.add_node("report_generator", report_generator_agent)
+    workflow.add_node("parallel_agents",    parallel_agents)
+    workflow.add_node("report_generator",   report_generator_agent)
     workflow.set_entry_point("parallel_agents")
-    workflow.add_edge("parallel_agents", "report_generator")
-    workflow.add_edge("report_generator", END)
+    workflow.add_edge("parallel_agents",    "report_generator")
+    workflow.add_edge("report_generator",   END)
     return workflow.compile()
+
 
 review_graph = build_review_graph()

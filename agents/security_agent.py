@@ -1,51 +1,32 @@
-from groq import Groq
-import os
-from dotenv import load_dotenv
+from __future__ import annotations
 
-load_dotenv()
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+from agents.base import run_review_agent
+from models.state import ReviewState
 
-def security_agent(state: dict) -> dict:
-    """
-    Scans PR diff for security vulnerabilities:
-    - Hardcoded secrets/API keys
-    - SQL injection risks
-    - Unsafe dependencies
-    - Authentication issues
-    - Data exposure risks
-    """
-    prompt = f"""
-    You are a security expert reviewing a pull request for vulnerabilities.
+_SECURITY_INSTRUCTIONS = """
+Analyze strictly for security issues:
+1. Hardcoded secrets, API keys, passwords, tokens
+2. SQL injection or command injection vulnerabilities
+3. Unsafe input handling or missing validation
+4. Authentication or authorization issues
+5. Sensitive data exposure
 
-    PR Title: {state['pr_title']}
-    PR Description: {state['pr_description']}
+For each issue found:
+- Severity: CRITICAL / HIGH / MEDIUM / LOW
+- Location: which file/line
+- Description: what the issue is
+- Fix: how to resolve it
 
-    Code Changes:
-    {state['pr_diff']}
+If no issues found, explicitly state "No security issues detected."
+Be concise and specific.
+"""
 
-    Analyse strictly for security issues:
-    1. Hardcoded secrets, API keys, passwords, tokens
-    2. SQL injection or command injection vulnerabilities
-    3. Unsafe input handling or missing validation
-    4. Authentication or authorization issues
-    5. Sensitive data exposure
 
-    For each issue found:
-    - Severity: CRITICAL / HIGH / MEDIUM / LOW
-    - Location: which file/line
-    - Description: what the issue is
-    - Fix: how to resolve it
-
-    If no issues found, explicitly state "No security issues detected."
-    Be concise and specific.
-    """
-
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=1024,
-        temperature=0.1  # low temperature for security — need precision
+def security_agent(state: ReviewState) -> ReviewState:
+    state["security_findings"] = run_review_agent(
+        state,
+        system_role="You are a security expert reviewing a pull request for vulnerabilities.",
+        instructions=_SECURITY_INSTRUCTIONS,
+        temperature=0.1,
     )
-
-    state["security_findings"] = response.choices[0].message.content
     return state
