@@ -295,20 +295,6 @@ CodeGuardian-AI/
 
 ---
 
-## 🎨 Design Patterns Used
-
-| Pattern | Where Used | Why |
-|---|---|---|
-| **Factory Pattern** | `create_app()` in main.py | Enables testing, clean instantiation |
-| **Strategy Pattern** | Agent system — each agent is interchangeable | Add new agents without changing orchestrator |
-| **Template Method** | `base.py` — `run_review_agent()` | Shared prompt building, agents only define instructions |
-| **Singleton** | `neo4j_client`, `report_store`, `get_groq_client()` | One shared instance across app |
-| **Chain of Responsibility** | LLM fallback chain in `llm.py` | Primary → fallback model on rate limit |
-| **State Machine** | LangGraph workflow | Predictable agent execution flow |
-| **Repository Pattern** | `ReportStore` | Decouples storage from business logic |
-| **Immutable Config** | `frozen=True` dataclass | Thread-safe, no accidental mutation |
-
----
 
 ## 🔌 API Reference
 
